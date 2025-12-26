@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>Leo - Annotator Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { overflow: hidden; }
+        #viewer-viewport {
+            height: calc(100vh - 64px);
+            overflow: auto;
+            scroll-behavior: smooth;
+            background: #09090b;
+        }
+        #pdf-master-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transform-origin: top center;
+            transition: transform 0.15s ease-out;
+            padding: 40px 0;
+        }
+        .page-wrapper {
+            position: relative;
+            margin-bottom: 2.5rem;
+            box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.7);
+            background: white;
+            cursor: crosshair;
+        }
+        .indicator-line {
+            position: absolute;
+            height: 1px;
+            background: #eab308;
+            opacity: 0.6;
+            pointer-events: none;
+            z-index: 20;
+        }
+        .bracket {
+            position: absolute;
+            right: -20px;
+            width: 12px;
+            border: 2px solid #eab308;
+            border-left: none;
+            pointer-events: none;
+            z-index: 25;
+        }
+        .note-marker {
+            position: absolute;
+            width: 210px;
+            right: -240px;
+            cursor: pointer;
+            z-index: 30;
+        }
+        header {
+            backdrop-filter: blur(12px) saturate(180%);
+            -webkit-backdrop-filter: blur(12px) saturate(180%);
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 font-sans">
+
+    <header class="h-16 border-b border-zinc-800/50 bg-zinc-900/70 flex items-center justify-between px-6 sticky top-0 z-[100]">
+        <div class="flex items-center gap-6 overflow-hidden">
+            <h1 class="text-2xl font-black italic text-yellow-500 tracking-tighter shrink-0">LEO</h1>
+            <div id="pdf-title" class="text-zinc-400 text-sm font-medium truncate max-w-[350px] border-l border-zinc-700 pl-6 italic">
+                Ningún archivo cargado
+            </div>
+            <div class="flex gap-2 shrink-0 ml-2">
+                <input type="file" id="file-input" class="hidden" accept="application/pdf">
+                <label for="file-input" class="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg text-xs cursor-pointer transition border border-zinc-700/50 shadow-sm">
+                    <i data-lucide="file-up" class="w-3.5 h-3.5 text-yellow-500"></i> Abrir PDF
+                </label>
+                <input type="file" id="import-json" class="hidden" accept=".json">
+                <label for="import-json" class="flex items-center gap-2 border border-zinc-700 hover:bg-zinc-800 px-3 py-1.5 rounded-lg text-xs cursor-pointer transition shadow-sm">
+                    <i data-lucide="folder-open" class="w-3.5 h-3.5"></i> Cargar JSON
+                </label>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <div class="flex items-center bg-zinc-900/80 border border-zinc-800 rounded-lg p-1 shrink-0 shadow-inner">
+                <button onclick="zoom(-0.1)" class="p-1 hover:bg-zinc-800 rounded-md transition"><i data-lucide="minus" class="w-4 h-4"></i></button>
+                <span id="zoom-label" class="px-3 text-[10px] font-mono w-12 text-center font-bold text-yellow-500/80">100%</span>
+                <button onclick="zoom(0.1)" class="p-1 hover:bg-zinc-800 rounded-md transition"><i data-lucide="plus" class="w-4 h-4"></i></button>
+            </div>
+            <button id="export-btn" class="bg-yellow-600 hover:bg-yellow-500 text-black font-bold px-5 py-2 rounded-lg text-sm transition shadow-lg shadow-yellow-900/20">
+                Guardar cambios
+            </button>
+        </div>
+    </header>
+
+    <div id="viewer-viewport">
+        <div id="pdf-master-container"></div>
+    </div>
+
+    <div id="editor-modal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-[200] backdrop-blur-md">
+        <div class="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl w-[450px] shadow-2xl ring-1 ring-white/5">
+            <div class="flex items-center gap-2 mb-4 text-yellow-500">
+                <i data-lucide="message-square" class="w-5 h-5"></i>
+                <span class="text-xs uppercase tracking-widest font-black">Anotación</span>
+            </div>
+            <textarea id="note-textarea" class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm focus:ring-1 focus:ring-yellow-500 outline-none h-44 mb-4 resize-none leading-relaxed text-zinc-200" placeholder="Escribe tu observación..."></textarea>
+            <div class="flex justify-between items-center">
+                <button id="btn-delete" class="text-zinc-500 hover:text-red-400 text-xs flex items-center gap-1.5 transition px-2 py-1 rounded-md hover:bg-red-500/10">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar
+                </button>
+                <div class="flex gap-3">
+                    <button onclick="closeModal()" class="px-5 py-2 text-zinc-400 hover:text-white text-xs transition font-medium">Cancelar</button>
+                    <button id="btn-save" class="bg-yellow-600 hover:bg-yellow-500 px-6 py-2 rounded-xl text-black font-bold text-xs shadow-lg shadow-yellow-900/20 transition">Listo</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const pdfjsLib = window['pdfjs-dist/build/pdf'];
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let annotations = [];
+        let currentScale = 1.0;
+        let activeNoteId = null;
+        let currentFileName = "documento";
+
+        lucide.createIcons();
+
+        function zoom(delta) {
+            currentScale = Math.max(0.5, Math.min(2.5, currentScale + delta));
+            document.getElementById('zoom-label').innerText = `${Math.round(currentScale * 100)}%`;
+            document.getElementById('pdf-master-container').style.transform = `scale(${currentScale})`;
+        }
+
+        document.getElementById('file-input').onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            currentFileName = file.name;
+            document.getElementById('pdf-title').innerText = currentFileName;
+            const reader = new FileReader();
+            reader.onload = async function() {
+                const pdf = await pdfjsLib.getDocument(new Uint8Array(this.result)).promise;
+                renderPDF(pdf);
+            };
+            reader.readAsArrayBuffer(file);
+        };
+
+        async function renderPDF(pdf) {
+            const container = document.getElementById('pdf-master-container');
+            container.innerHTML = '';
+            annotations = [];
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const wrapper = document.createElement('div');
+                wrapper.className = 'page-wrapper';
+                wrapper.dataset.page = i;
+                wrapper.style.width = viewport.width + 'px';
+                wrapper.style.height = viewport.height + 'px';
+
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                wrapper.appendChild(canvas);
+                container.appendChild(wrapper);
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                setupPageEvents(wrapper, viewport);
+            }
+        }
+
+        function setupPageEvents(wrapper, viewport) {
+            let startY = 0;
+            let isDragging = false;
+
+            wrapper.addEventListener('mousedown', (e) => {
+                if (e.target.closest('.note-marker') || document.getElementById('editor-modal').style.display === 'flex') return;
+                
+                startY = e.offsetY;
+                isDragging = false;
+                
+                const moveHandler = (moveEvent) => {
+                    if (Math.abs(moveEvent.offsetY - startY) > 5) {
+                        isDragging = true;
+                    }
+                };
+                
+                wrapper.addEventListener('mousemove', moveHandler);
+
+                const upHandler = (upEvent) => {
+                    wrapper.removeEventListener('mousemove', moveHandler);
+                    const endY = upEvent.offsetY;
+                    
+                    if (document.getElementById('editor-modal').style.display !== 'flex') {
+                        const newNote = {
+                            id: Date.now(),
+                            page: wrapper.dataset.page,
+                            yStart: (Math.min(startY, endY) / viewport.height) * 100,
+                            yEnd: (Math.max(startY, endY) / viewport.height) * 100,
+                            xPos: (e.offsetX / viewport.width) * 100,
+                            isRange: isDragging,
+                            isInside: e.target.tagName === 'CANVAS',
+                            text: ""
+                        };
+                        
+                        annotations.push(newNote);
+                        renderNoteUI(newNote);
+                        openModal(newNote.id);
+                    }
+                    window.removeEventListener('mouseup', upHandler);
+                };
+                window.addEventListener('mouseup', upHandler);
+            });
+        }
+
+        function renderNoteUI(anno) {
+            const wrapper = document.querySelector(`.page-wrapper[data-page="${anno.page}"]`);
+            if (!wrapper) return;
+
+            const existing = document.getElementById(`note-group-${anno.id}`);
+            if (existing) existing.remove();
+
+            const group = document.createElement('div');
+            group.id = `note-group-${anno.id}`;
+
+            if (anno.isRange) {
+                const bracket = document.createElement('div');
+                bracket.className = 'bracket';
+                bracket.style.top = `${anno.yStart}%`;
+                bracket.style.height = `${Math.max(anno.yEnd - anno.yStart, 1)}%`;
+                group.appendChild(bracket);
+            } else if (anno.isInside) {
+                const line = document.createElement('div');
+                line.className = 'indicator-line';
+                line.style.top = `${anno.yStart}%`;
+                line.style.left = `${anno.xPos}%`;
+                line.style.width = `${100 - anno.xPos}%`;
+                group.appendChild(line);
+            }
+
+            const note = document.createElement('div');
+            note.className = 'note-marker group';
+            note.style.top = `${anno.yStart}%`;
+            note.innerHTML = `
+                <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl hover:border-yellow-500/50 hover:bg-zinc-800/80 transition-all duration-300 transform hover:-translate-x-1">
+                    <p class="text-[11px] text-zinc-400 leading-relaxed line-clamp-4">${anno.text || '<span class="italic opacity-30 text-[10px]">Escribir nota...</span>'}</p>
+                </div>
+            `;
+            note.onclick = (e) => { e.stopPropagation(); openModal(anno.id); };
+            group.appendChild(note);
+            wrapper.appendChild(group);
+        }
+
+        function openModal(id) {
+            activeNoteId = id;
+            const anno = annotations.find(a => a.id === id);
+            document.getElementById('note-textarea').value = anno.text;
+            document.getElementById('editor-modal').style.display = 'flex';
+            setTimeout(() => document.getElementById('note-textarea').focus(), 50);
+        }
+
+        function closeModal() {
+            document.getElementById('editor-modal').style.display = 'none';
+            activeNoteId = null;
+        }
+
+        document.getElementById('btn-save').onclick = (e) => {
+            e.stopPropagation();
+            const anno = annotations.find(a => a.id === activeNoteId);
+            if (anno) {
+                anno.text = document.getElementById('note-textarea').value;
+                renderNoteUI(anno);
+            }
+            closeModal();
+        };
+
+        document.getElementById('btn-delete').onclick = (e) => {
+            e.stopPropagation();
+            const el = document.getElementById(`note-group-${activeNoteId}`);
+            if (el) el.remove();
+            annotations = annotations.filter(a => a.id !== activeNoteId);
+            closeModal();
+        };
+
+        document.getElementById('export-btn').onclick = () => {
+            const blob = new Blob([JSON.stringify(annotations, null, 2)], {type : 'application/json'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `leo_highlight_${currentFileName}.json`;
+            a.click();
+        };
+
+        document.getElementById('import-json').onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                document.querySelectorAll('[id^="note-group-"]').forEach(el => el.remove());
+                annotations = JSON.parse(event.target.result);
+                annotations.forEach(renderNoteUI);
+            };
+            reader.readAsText(file);
+        };
+    </script>
+</body>
+</html>
