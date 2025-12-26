@@ -39,17 +39,21 @@
         }
         .bracket {
             position: absolute;
-            right: -20px;
             width: 12px;
             border: 2px solid #eab308;
-            border-left: none;
             pointer-events: none;
             z-index: 25;
         }
+        /* Lado Derecho */
+        .bracket-right { right: -20px; border-left: none; }
+        .note-right { right: -240px; }
+        /* Lado Izquierdo */
+        .bracket-left { left: -20px; border-right: none; }
+        .note-left { left: -240px; }
+
         .note-marker {
             position: absolute;
             width: 210px;
-            right: -240px;
             cursor: pointer;
             z-index: 30;
         }
@@ -64,7 +68,7 @@
     <header class="h-16 border-b border-zinc-800/50 bg-zinc-900/70 flex items-center justify-between px-6 sticky top-0 z-[100]">
         <div class="flex items-center gap-6 overflow-hidden">
             <h1 class="text-2xl font-black italic text-yellow-500 tracking-tighter shrink-0">LEO</h1>
-            <div id="pdf-title" class="text-zinc-400 text-sm font-medium truncate max-w-[350px] border-l border-zinc-700 pl-6 italic">
+            <div id="pdf-title" class="text-zinc-400 text-sm font-medium truncate max-w-[350px] border-l border-zinc-700 pl-6 italic tracking-normal">
                 Ningún archivo cargado
             </div>
             <div class="flex gap-2 shrink-0 ml-2">
@@ -82,7 +86,7 @@
         <div class="flex items-center gap-4">
             <div class="flex items-center bg-zinc-900/80 border border-zinc-800 rounded-lg p-1 shrink-0 shadow-inner">
                 <button onclick="zoom(-0.1)" class="p-1 hover:bg-zinc-800 rounded-md transition"><i data-lucide="minus" class="w-4 h-4"></i></button>
-                <span id="zoom-label" class="px-3 text-[10px] font-mono w-12 text-center font-bold text-yellow-500/80">100%</span>
+                <span id="zoom-label" class="px-3 text-[10px] font-mono w-12 text-center font-bold text-yellow-500/80 uppercase">100%</span>
                 <button onclick="zoom(0.1)" class="p-1 hover:bg-zinc-800 rounded-md transition"><i data-lucide="plus" class="w-4 h-4"></i></button>
             </div>
             <button id="export-btn" class="bg-yellow-600 hover:bg-yellow-500 text-black font-bold px-5 py-2 rounded-lg text-sm transition shadow-lg shadow-yellow-900/20">
@@ -169,33 +173,32 @@
 
         function setupPageEvents(wrapper, viewport) {
             let startY = 0;
+            let startX = 0;
             let isDragging = false;
 
             wrapper.addEventListener('mousedown', (e) => {
                 if (e.target.closest('.note-marker') || document.getElementById('editor-modal').style.display === 'flex') return;
                 
                 startY = e.offsetY;
+                startX = e.offsetX;
                 isDragging = false;
                 
-                const moveHandler = (moveEvent) => {
-                    if (Math.abs(moveEvent.offsetY - startY) > 5) {
-                        isDragging = true;
-                    }
-                };
-                
+                const moveHandler = (mv) => { if (Math.abs(mv.offsetY - startY) > 5) isDragging = true; };
                 wrapper.addEventListener('mousemove', moveHandler);
 
                 const upHandler = (upEvent) => {
                     wrapper.removeEventListener('mousemove', moveHandler);
-                    const endY = upEvent.offsetY;
-                    
                     if (document.getElementById('editor-modal').style.display !== 'flex') {
+                        // Determinar lado (Izquierda < 50% de la hoja, Derecha > 50%)
+                        const side = (startX < (viewport.width / 2)) ? 'left' : 'right';
+                        
                         const newNote = {
                             id: Date.now(),
                             page: wrapper.dataset.page,
-                            yStart: (Math.min(startY, endY) / viewport.height) * 100,
-                            yEnd: (Math.max(startY, endY) / viewport.height) * 100,
-                            xPos: (e.offsetX / viewport.width) * 100,
+                            yStart: (Math.min(startY, upEvent.offsetY) / viewport.height) * 100,
+                            yEnd: (Math.max(startY, upEvent.offsetY) / viewport.height) * 100,
+                            xPos: (startX / viewport.width) * 100,
+                            side: side,
                             isRange: isDragging,
                             isInside: e.target.tagName === 'CANVAS',
                             text: ""
@@ -220,27 +223,34 @@
 
             const group = document.createElement('div');
             group.id = `note-group-${anno.id}`;
+            const sideClass = anno.side === 'left' ? 'left' : 'right';
 
             if (anno.isRange) {
                 const bracket = document.createElement('div');
-                bracket.className = 'bracket';
+                bracket.className = `bracket bracket-${sideClass}`;
                 bracket.style.top = `${anno.yStart}%`;
-                bracket.style.height = `${Math.max(anno.yEnd - anno.yStart, 1)}%`;
+                bracket.style.height = `${Math.max(anno.yEnd - anno.yStart, 1.5)}%`;
                 group.appendChild(bracket);
             } else if (anno.isInside) {
                 const line = document.createElement('div');
                 line.className = 'indicator-line';
                 line.style.top = `${anno.yStart}%`;
-                line.style.left = `${anno.xPos}%`;
-                line.style.width = `${100 - anno.xPos}%`;
+                if (anno.side === 'left') {
+                    line.style.left = `-20px`;
+                    line.style.width = `${anno.xPos}%`;
+                    line.style.marginLeft = `20px`;
+                } else {
+                    line.style.left = `${anno.xPos}%`;
+                    line.style.width = `${100 - anno.xPos}%`;
+                }
                 group.appendChild(line);
             }
 
             const note = document.createElement('div');
-            note.className = 'note-marker group';
+            note.className = `note-marker note-${sideClass} group`;
             note.style.top = `${anno.yStart}%`;
             note.innerHTML = `
-                <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl hover:border-yellow-500/50 hover:bg-zinc-800/80 transition-all duration-300 transform hover:-translate-x-1">
+                <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl hover:border-yellow-500/50 hover:bg-zinc-800/80 transition-all duration-300 transform ${anno.side === 'right' ? 'hover:-translate-x-1' : 'hover:translate-x-1'}">
                     <p class="text-[11px] text-zinc-400 leading-relaxed line-clamp-4">${anno.text || '<span class="italic opacity-30 text-[10px]">Escribir nota...</span>'}</p>
                 </div>
             `;
@@ -257,13 +267,9 @@
             setTimeout(() => document.getElementById('note-textarea').focus(), 50);
         }
 
-        function closeModal() {
-            document.getElementById('editor-modal').style.display = 'none';
-            activeNoteId = null;
-        }
+        function closeModal() { document.getElementById('editor-modal').style.display = 'none'; activeNoteId = null; }
 
         document.getElementById('btn-save').onclick = (e) => {
-            e.stopPropagation();
             const anno = annotations.find(a => a.id === activeNoteId);
             if (anno) {
                 anno.text = document.getElementById('note-textarea').value;
@@ -273,7 +279,6 @@
         };
 
         document.getElementById('btn-delete').onclick = (e) => {
-            e.stopPropagation();
             const el = document.getElementById(`note-group-${activeNoteId}`);
             if (el) el.remove();
             annotations = annotations.filter(a => a.id !== activeNoteId);
